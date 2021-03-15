@@ -1,0 +1,406 @@
+---
+title: "Analysis of the Impact of Government Policy Decisions on the COVID-19 Pandemic in Europe"
+author: "Blake, Charlie, Eshna, Noah, Group 7"
+date: "March 5, 2021"
+output: bookdown::html_document2
+df_print: paged
+number_sections: yes
+fig_caption: yes
+---
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.pos = 'H')
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F,messages = F)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, message=FALSE, results='hide'}
+# clear environment
+rm(list=ls())
+
+# Clear all plotsfee
+try(dev.off(dev.list()["RStudioGD"]),silent=TRUE)
+try(dev.off(),silent=TRUE)
+
+# Setup
+library(readxl)
+library(dplyr)
+library(tidyverse)
+filepath <- "C:\\Users\\Blake\\Documents\\UC Davis\\STA 207"
+
+  # replace with location of data
+
+# Read in data
+pop <- read_excel(paste0(filepath, "\\World Bank Population.xlsx"), 
+                  range = "A5:BM269",
+                  col_names = TRUE)
+
+# Two countries have population missing in 2019: "Eritrea" and "Not classified"
+  # summary(pop$`2019`)
+  # View(pop[is.na(pop$`2019`),])
+
+# use 2011 population for Eritrea, use 2019 population for all other countries
+  pop$population <- ifelse(pop$`Country Name` == "Eritrea", pop$`2011`, pop$`2019`)
+  pop <- pop[, c('Country Name', 'population')]
+  pop <- rename(pop, Country = `Country Name`)
+
+# Standardize names to make merge work (done only for European countries and US)
+  pop$Country <- ifelse(pop$Country == 'Czech Republic', 'Czechia', pop$Country)
+  pop$Country <- ifelse(pop$Country == 'Slovak Republic', 'Slovakia', pop$Country)
+  pop$Country <- ifelse(pop$Country == 'United Kingdom', 'The United Kingdom', pop$Country)
+  pop$Country <- ifelse(pop$Country == 'United States', 'United States of America', pop$Country)
+
+
+# Merge with covid data
+  covid <- read_csv("https://covid19.who.int/WHO-COVID-19-global-data.csv")
+  covid_merged <- left_join(covid, pop, by = 'Country')
+
+# Checking merge
+  # List all countries that didn't merge
+  # merge_check <- covid_merged[is.na(covid_merged$population)|is.na(covid_merged$Date_reported),]
+  # merge_check <- merge_check %>% group_by(Country) %>% summarize(pop_mean = mean(population))
+  #
+  # Check list countries in covid data with population missing after merge
+  #merge_check2 <- covid_merged[is.na(covid_merged$population), c('Country','population')] %>% group_by(Country) %>% summarize(n = n())
+
+  
+  stay <- read_csv(paste0(filepath, "\\stay-at-home-covid.csv"))
+  stay$Date <- as.Date(stay$Date, "%m/%d/%Y")
+  
+  face <- read_csv(paste0(filepath, "\\face-covering-policies-covid.csv"))
+  face$Date <- as.Date(face$Date, "%m/%d/%Y")
+  
+  public <- read_csv(paste0(filepath, "\\public-events-covid.csv"))
+  public$Date <- as.Date(public$Date, "%m/%d/%Y")
+  
+  school <- read_csv(paste0(filepath, "\\school-closures-covid.csv"))
+  school$Date <- as.Date(school$Date, "%m/%d/%Y")
+  
+  # Putting all explanatory data together
+  data <- inner_join(stay, face, by = c("Entity", "Code","Date"))
+  data <- inner_join(data, public, by = c("Entity", "Code","Date"))
+  data <- inner_join(data, school, by = c("Entity", "Code","Date"))
+  
+  # Only keeping dates before February 1, 2021 and aggregate by week
+  data <- data[data$Date < "2021-02-01", ]
+  
+  library(lubridate)
+  data <- data %>% 
+    group_by(Entity, Code, year = year(Date), month = month(Date)) %>% 
+    summarise_if(is.numeric, max)
+  
+  library(zoo)
+  data$Date <- as.yearmon(paste(data$year, data$month), "%Y %m")
+  
+  # Only keeping European data with total deaths and population
+  covid_merged <- covid_merged[covid_merged$WHO_region == "EURO", c("Date_reported", "Country", "New_deaths", "population")]
+  
+  covid_merged <- covid_merged %>% 
+    group_by(Country, year = year(Date_reported), month = month(Date_reported)) %>% 
+    summarise_if(is.numeric, mean)
+  
+  covid_merged$Date <- as.yearmon(paste(covid_merged$year, covid_merged$month), "%Y %m")
+  
+  
+  # Joining exact explanatory variables with data set
+  covid_merged <- inner_join(covid_merged, data, by = c("Country" = "Entity", "Date"))
+  
+  
+  # Model
+  fit1 <- lm(New_deaths/population*100000 ~ + Country + Date + stay_home_requirements + facial_coverings + cancel_public_events + school_closures 
+             - 1, 
+             data = covid_merged)
+  
+  summary(fit1)$coefficients[49:52,]
+  
+  library(gtsummary)
+  tbl_regression(fit1,include=c('stay_home_requirements','facial_coverings', 'cancel_public_events', 'school_closures'))
+  
+  
+  # diagnostics - CH
+```
+
+
+
+# Abstract 
+
+COVID-19 is a new coronavirus strain that emerged at the end of 2019. The virus is highly infectious and has since spread around the world causing an ongoing global pandemic. People who contract COVID-19 most often experience minor symptoms such as cough and fever while some are asymptomatic. While the vast majority of people who are infected recover, COVID-19 has caused a large number of deaths. Countries have implemented lockdowns and other regulations to enforce preventative measures in an effort to control the spread of this virus. Some of these enforced policies include mask mandates, social distancing, and school closures. This analysis focuses on the impact of certain governmental policy decisions and their impact on the severity of the pandemic in that region.
+
+# Introduction
+
+The dataset utilized in this study is from the World Health Organization (WHO) in the format of a CSV file that is updated on a daily basis. The data set contains information about COVID-19 cases for each of the 237 countries data was collected from. Data collection began January 3, 2020 and this report uses all data collected until February 1, 2021. The number of new cases, cumulative cases , new deaths and cumulative deaths are recorded for each day of data collection. This report will investigate the different government structures and responses with their respective COVID-19 health outcomes specifically in Europe.  
+
+# Background
+
+COVID-19 is a new coronavirus strain that emerged at the end of 2019. The virus is highly infectious  and has since spread around the world causing an ongoing global pandemic. Many countries responded to the outbreak by implementing lockdowns and requiring preventative measures such as social distancing, wearing masks, and prohibiting large gatherings. However, the specifics, timing, and effectiveness of each country’s response have differed widely. For instance, the United States has fared far worse than many other countries with over 29 million cases out of the 115 million global cases.
+ 
+People who contract COVID-19 most often experience minor symptoms such as cough and fever while some are asymptomatic. While the vast majority of people who are infected recover, COVID-19 has caused a large number of deaths, and people who are older or who have preexisting medical conditions are most susceptible to getting severe cases.
+
+Coronavirus is a highly contagious respiratory illness which is also known as COVID-19. This virus spreads through droplets in the air when an infected person coughs or sneezes. There is no specific treatment for the virus and laboratory tests are required for confirmation of diagnosis. Many countries responded to the outbreak by implementing lockdowns and requiring preventative measures such as social distancing, wearing masks, and prohibiting large gatherings. However, the specifics, timing, and effectiveness of each country’s response have differed widely. For instance, the United States has fared far worse than many other countries with over 29 million cases out of the 115 million global cases (WHO, 2021).  While most recover from COVID-19, some have symptoms that last for weeks or even months after recovering from acute illness. The long term effects of COVID-19 are not currently known and it is being investigated. Those with a higher risk of dying from COVID-19 and related complications are older people and those with underlying medical conditions. Currently, there is an increase in global coronavirus cases which may be due to public health restrictions being lifted in addition to new coronavirus variants. (WHO, 2021). Multiple vaccines have been developed for emergency use and over 245 million doses have been administered in 107 countries. 
+
+In order to reduce the severity of the pandemic, limiting contact between infected individuals is important. Since the primary route of transmission of coronavirus is through respiratory particles, there is overwhelming evidence that mask wearing " reduces transmissibility per contact by reducing transmission of infected respiratory particles" (Howard et al., 2021).
+
+The CDC states that the more people and longer time an individual interacts with others, the higher the potential risk of contracting and spreading COVID-19. ("Community Mitigations", 2021). Guidelines regarding social gatherings are based upon national, state and local laws and regulations. 
+
+Currently, there is limited information regarding children and COVID-19. Based on knowledge from other respiratory viruses such as the flu, it is known that "children have a substantial role in transmission" (Cauchemez et al.). School closures have been taken as preventative measures and mitigation strategies during this coronavirus pandemic. Is it important to understand the effect of school closure policies on COVID-19 outcomes to prepare for future school years.
+
+
+# Descriptive Analysis
+
+```{r, include = FALSE}
+# Packages
+library(tidyverse)
+library(gt)
+
+# Read in data
+covid <- read_csv("https://covid19.who.int/WHO-COVID-19-global-data.csv")
+```
+
+
+```{r, include = FALSE}
+# Aggregate for Table
+covid_agg <- covid %>% 
+  group_by(year = lubridate::year(Date_reported), month = lubridate::month(Date_reported)) %>% 
+  summarise(cases = sum(New_cases), deaths = sum(New_deaths))
+
+covid_agg$Date <- zoo::as.yearmon(paste(covid_agg$year, covid_agg$month), "%Y %m")
+
+covid_agg <- covid_agg[1:14 ,c('Date', 'cases', 'deaths')]
+
+covid_agg2 <- covid %>%
+  summarise(cases = sum(New_cases), deaths = sum(New_deaths))
+
+covid_agg2$Date <- "Total"
+
+covid_agg2 <- covid_agg2[, c('Date', 'cases', 'deaths')]
+```
+
+
+The table below shows that total global number of deaths and cases for the time period analyzed.
+  
+  
+```{r, echo = FALSE}
+covid_agg2 %>% gt() %>%
+  fmt_number(columns = colnames(covid_agg)[2:3], decimals = 0) %>%
+  tab_header(
+    title = md("Global Cases and Deaths"),
+  ) %>%
+  tab_options(
+    table.font.size = pct(90)
+  )
+```
+  
+    
+The following table breaks down the global totals by month. The number of global cases rose in each month of 2020, reaching a peak in January 2021 before decreasing in February 2021. The number of global deaths has fluctuated over time but also surged at the end of 2020 and peaked in January 2021.
+  
+  
+    
+```{r, echo = FALSE}
+covid_agg %>% gt() %>%
+  fmt_number(columns = colnames(covid_agg)[2:3], decimals = 0) %>%
+  tab_header(
+    title = md("Global Cases and Deaths by Month"),
+  ) %>%
+  tab_options(
+    table.font.size = pct(90)
+  )
+```
+
+
+This report will not analyze every country from the WHO data set. The WHO regions include African Region (AFRO), Regions of the Americas (AMRO), South East Asian Region (SEARO), European Region (EURO), Eastern Mediterranean Region (EMRO) and the Western Pacific Region (WPRO). However, we limit our modeling to the countries classified into the European Region (EURO) in the WHO dataset. 
+
+The following charts depict the number of cases, deaths, and the case fatality rate over time for several large countries in Europe as well as the fluctuations in policy measures related to public events, school closures, stay at home orders, and face coverings that were implemented by these countries to prevent the spread of COVID-19. France, Germany, and Italy were chosen to simplify visualizations in the report. Case fatality rate (CFR) is all deaths from the specific disease in the population divided by all cases of the disease in the population. It is important to note that CFR is not an accurate measure of the mortality risk of the disease during a pandemic.
+
+  
+  
+
+```{r, include = FALSE}
+
+europecovid= filter(covid, (WHO_region =="EURO"))
+europecovid= filter(europecovid, (Date_reported <= "2021-02-28"))
+
+publicevents <- read.csv("public-events-covid.csv")
+schoolclosures<- read.csv("school-closures-covid.csv")
+stayhome<- read.csv("stay-at-home-covid.csv") 
+facecoverings <- read.csv("face-covering-policies-covid.csv") 
+```
+
+```{r, echo = FALSE}
+#France Cases, Deaths, CFR
+france= filter(europecovid, (Country=="France"))
+france=mutate(france,time=seq(1:423))
+franceCFR= france$Cumulative_deaths/france$Cumulative_cases
+par(mfrow=c(3,1))
+plot(france$time, france$New_cases, main="Plot of New cases vs Time for France", xlab="Time (in days)", ylab="# of New Cases")
+plot(france$time, france$New_deaths, main="Plot of New deaths vs Time for France", xlab="Time (in days)", ylab="# of New Deaths")
+plot(franceCFR, main="Plot of France CFR",xlab = "Time (in days)", ylab = "CFR")
+```
+
+Plot for France shows a nonlinear trend for new cases, new deaths and for CFR.  For new cases, there appears to be one peak while in new deaths there appears to be more than one peak. CFR began to increase but began a negative trend after 150 days.
+
+
+```{r, echo = FALSE}
+# France Policies
+par(mfrow=c(2,2))
+franceevents= filter(publicevents, (Entity=="France"))
+plot(franceevents$cancel_public_events, main="Plot of Public Event for France ",xlab = "Time (in days)", ylab = "Score")
+
+franceschool= filter(schoolclosures, (Entity=="France"))
+plot(franceschool$school_closures, main="Plot of School Closures for France ",xlab = "Time (in days)", ylab = "Score")
+
+francestayhome= filter(stayhome, (Entity=="France"))
+plot(francestayhome$stay_home_requirements, main="Plot of Stay at Home Requirements for France ",xlab = "Time (in days)", ylab = "Score")
+
+francecoverings= filter(facecoverings, (Entity=="France"))
+plot(francecoverings$facial_coverings, main="Plot of Facial Coverings for France",xlab = "Time (in days)", ylab = "Score")
+```
+
+
+In France, we can see that stay at home requirements changed the least frequently while school closures changed the most frequently. We can see a positive trend in facial covering regulations as time increases.
+
+
+
+```{r, echo = FALSE}
+# Germany Cases, Deaths, CFR
+germany= filter(europecovid, (Country=="Germany"))
+germany=mutate(germany,time=seq(1:423))
+germanyCFR= germany$Cumulative_deaths/germany$Cumulative_cases
+par(mfrow=c(3,1))
+plot(germany$time, germany$New_cases, main="Plot of New cases vs Time for Germany", xlab="Time (in days)", ylab="# of New Cases")
+plot(germany$time, germany$New_deaths, main="Plot of New deaths vs Time for Germany", xlab="Time (in days)", ylab="# of New Deaths")
+plot(germanyCFR, main="Plot of Germany CFR",xlab = "Time (in days)", ylab = "CFR")
+```
+
+Plot for Germany shows a nonlinear trend for all three graphs. For new cases and new deaths, there appears to be more than one peak. CFR began to decrease after 150 days but began a positive trend around 350 days.
+
+```{r, echo = FALSE}
+# Germany Policies
+par(mfrow=c(2,2))
+germanyevents= filter(publicevents, (Entity=="Germany"))
+plot(germanyevents$cancel_public_events, main="Plot of Public Event for Germany ",xlab = "Time (in days)", ylab = "Score")
+
+germanyschool= filter(schoolclosures, (Entity=="Germany"))
+plot(germanyschool$school_closures, main="Plot of School Closures for Germany ",xlab = "Time (in days)", ylab = "Score")
+
+germanystayhome= filter(stayhome, (Entity=="Germany"))
+plot(germanystayhome$stay_home_requirements, main="Plot of Stay at Home Requirements for Germany ",xlab = "Time (in days)", ylab = "Score")
+
+germanycoverings= filter(facecoverings, (Entity=="Germany"))
+plot(germanycoverings$facial_coverings, main="Plot of Facial Coverings for Germany",xlab = "Time (in days)", ylab = "Score")
+```
+
+In Germany, facial covering and public event policy seems to be constant after day 100. Currently all policies are strictest.
+
+
+```{r, echo = FALSE}
+# Italy Cases, Deaths, CFR
+italy= filter(europecovid, (Country=="Italy"))
+italy=mutate(italy,time=seq(1:423))
+italyCFR= italy$Cumulative_deaths/italy$Cumulative_cases
+par(mfrow=c(3,1))
+plot(italy$time, italy$New_cases, main="Plot of New cases vs Time for Italy", xlab="Time (in days)", ylab="# of New Cases")
+plot(italy$time, italy$New_deaths, main="Plot of New deaths vs Time for Italy", xlab="Time (in days)", ylab="# of New Deaths")
+plot(italyCFR, main="Plot of Italy CFR",xlab = "Time (in days)", ylab = "CFR")
+```
+
+Plots for Italy also have a nonlinear trend for all three graphs. Variance between points begins to grow towards the end of the graph for new deaths. CFR was similar between day 150 to 225 and began to decrease afterwards.
+
+
+```{r, echo = FALSE}
+# Italy Policies
+par(mfrow=c(2,2))
+italyevents= filter(publicevents, (Entity=="Italy"))
+plot(italyevents$cancel_public_events, main="Plot of Public Event for Italy ",xlab = "Time (in days)", ylab = "Score")
+
+italyschool= filter(schoolclosures, (Entity=="Italy"))
+plot(italyschool$school_closures, main="Plot of School Closures for Italy ",xlab = "Time (in days)", ylab = "Score")
+
+italystayhome= filter(stayhome, (Entity=="Italy"))
+plot(italystayhome$stay_home_requirements, main="Plot of Stay at Home Requirements for Italy ",xlab = "Time (in days)", ylab = "Score")
+
+italycoverings= filter(facecoverings, (Entity=="Italy"))
+plot(italycoverings$facial_coverings, main="Plot of Facial Coverings for Italy",xlab = "Time (in days)", ylab = "Score")
+
+```
+
+Italy has a constant public event and facial covering policy since day 100. Stay at home policies has changed most frequently.
+
+
+# Statistical Approach
+
+The section below is taken verbatim from this group's previous report on traffic fatalities. The approach we take in this analysis is identical to the approach we took in the previous report, so we include the statistical approach here as a direct quotation because rewording it would be unecessary. Please see the previous project report for more details. 
+
+The purpose of this analysis is to find which policy measures decrease the growth of cumulative COVID-19 deaths. Therefore, for the response variable we chose to use the cumulative deaths per 100,000 people in the population for each respective country.
+
+There are three different groups of explanatory variables: country fixed effects, monthly fixed effects, and policy-related variables. Country fixed effects models take into account the variation for country-specific factors that are not included in the data. For the policy-related variables, we sought to find if indices for stay-at-home requirements, facial coverings, the cancellation of public events, and school closures had associations with the cumulative deaths per 100,000 people in the population. The cancelation of public events is rated on a zero to two scale, school closures are rated on a zero to three scale, facial covering policies are rated on a zero to four scale, and stay-at-home requirements are rated on a zero to three scale. Zero represents no policy implementations and the highest end of the scale represents the most stringent implementations of these policies. The equation below is the fixed effects model detailed above but with the variables of interest for this study. 
+
+
+$Y_{it} = \beta_{stay}X_{stay,it}+ \beta_{facial}X_{facial,it} + \beta_{cancel}X_{cancel,it} + \beta_{school}X_{school,it} + \alpha_i Country_i + \gamma_t Month_t + \epsilon_{it}$
+
+Where $i$ indicates the state, $\alpha$ is the state fixed effect, and $\gamma$ is the year fixed effect. This model is estimated using OLS. Therefore, other than assuming the functional form of the relationship is truly linear, the assumptions of this model are that 1) the error term has constant variance, 2) the error terms are independent, 3) the error terms are normally distributed, 4) there are no outliers, and 5) there are no missing variables (Chen, 2021).
+
+We found school closures to have a non-significant effect on cumulative deaths. We then compared a reduced model without school closures and found that removing school closures from the model signficnatly improved the model. This was done using an ANOVA test to compare the two models. The final model can be seen below.
+
+$Y_{it} = \beta_{stay}X_{stay,it}+ \beta_{facial}X_{facial,it} + \beta_{cancel}X_{cancel,it} + \alpha_i Country_i + \gamma_t Month_t + \epsilon_{it}$
+
+
+# Results
+
+```{r}
+ library(gtsummary)
+  tbl_regression(fit1,include=c('stay_home_requirements','facial_coverings', 'cancel_public_events', 'school_closures'))
+  
+```
+  
+  
+From the table of coefficients above, we can see that policies on facial coverings have a negative statistically significant estimated coefficient. Therefore, we can conclude that the policy with the strongest association with a lower growth in cumulative fatalities is facial coverings. The cancellation of public events was also found to be negative statically significant but was only marginally significant when using a significance level of 0.05.
+
+Stay at home requirements were also found to be statistically significant but were found to have a positive association with cumulative deaths. This goes against the intuition that stay-at-home requirements would decrease the growth of cumulative deaths, so we will not make any policy sugges   tions towards stay-at-home orders. Additionally, in the initial model, we found that school closures did not have a statistically significant effect, which also goes against intuition.
+
+The estimated coefficients on the country and monthly effects are not shown as there are many and we do not draw any important conclusions related to our question of interest from these coefficients.
+
+
+
+# Causal Inference
+
+Causal inference is a difficult thing to achieve in statistical analyses without randomization. There are simply too many variables unaccounted for. Fixed effects longitudinal studies attempt to overcome this, but they have their own drawbacks. The model includes controls for country and date in addition to the targeted policies, but even this is not a complete solution. The stay at home requirements resulted in a highly significant p-value associated with a positive coefficient predicting cumulative deaths. This would seem to indicate that forcing citizens to stay at home increases the deaths, which is highly unintuitive. What is more likely is that when deaths rise then governments are more likely to issue stay at home orders. Correlation rather than causation. It is not always so clear, so assuming causation is inherently risky without a randomized control trial. Based on the diagnostics in the next section and the lack of exhaustive control variables in this observational study, this analysis does not provide adequate evidence of causal effects.
+
+# Regression Diagnostics
+
+Diagnostics of the underlying assumptions are found below. As shown below, the residuals vs fitted plot reveals significant heteroscedasticity, which weakens the validity of the model. As shown below, the residuals are far from normally distributed, which reduces confidence in the p values for the coefficients obtained. As shown in the Scale-Location plot below, severe heteroscedasticity is evident. If the residuals are homoscedastic, the red line will be horizontal, which it plainly is not. Plotting the residuals vs their leverage, one obtains the plot below. This plot shows that there are many observations used in the model that have an unreasonable impact on the results (many points found on the far side of the Cook's distance line in red). They should be considered candidate outliers and further investigation is necessary.
+
+
+```{r}
+  plot(fit2)
+```
+
+Overall, the foundational assumptions of linear regression are severely challenged by the diagnostics results presented above. The results of this study should be examined carefully and treated with caution.
+
+# Discussion
+
+According to this analysis, facial coverings and the cancellation of public events appear to be constructive and death-preventing policies, while stay-at-home orders are correlated with a higher deaths. This last result is likely a result of the familiar "correlation vs causation" problem with regression. It is more likely that the increasing death rate induces governments to take action and issue stay at home orders.  
+
+The model diagnostics reveal that the underlying assumptions of the regression methods used in this analysis are not entirely valid. Thus, whatever results are considered here should be treated with caution.
+
+
+# Acknowledgements {-}
+
+Thank you to Professor Chen for his help during office hours, to the course notes, and to helpful classmates on Piazza.
+  
+# References {-}
+
+World Health Organization. (2021, March 1) WHO press conference on coronavirus disease (COVID-19) [Interview Transcript]. Retrieved from https://www.who.int/multi-media/details/who-press-conference-on-coronavirus-disease-(covid-19)---1-march-2021
+
+Cauchemez, S., Nicoll, A., Duncan B, B., Saour, G., Tegnell, A., Wachtel, C., & Ferguson, N. M. (n.d.). Closure of schools during an influenza pandemic. Retrieved March 05, 2021, from https://pubmed.ncbi.nlm.nih.gov/19628172/
+
+Community mitigation framework. (2021, February 16). Retrieved March 05, 2021, from https://www.cdc.gov/coronavirus/2019-ncov/community/community-mitigation.html 
+
+Howard, J., Huang, A., Li, Z., Tufekci, Z., Zdimal, V., Westhuizen, H., . . . Rimoin, A. (2021, January 26). An evidence review of face masks against COVID-19. Retrieved March 05, 2021, from https://www.pnas.org/content/118/4/e2014564118 
+
+
+# Session info {-}
+
+```{r}
+sessionInfo()
+```
